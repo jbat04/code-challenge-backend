@@ -1,13 +1,15 @@
 export let basket: BasketItem[] = [];
 export let basketTotal = 0;
 
+import { KANPLA_API_TOKEN } from './config/config.js';
+
 type BasketItem = {
   id: string;
   name: string;
   price: number;
 };
 
-const TOKEN = "token";
+const TOKEN = KANPLA_API_TOKEN || ''; 
 
 export async function addToBasket(
   productId: string
