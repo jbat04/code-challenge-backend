@@ -11,6 +11,17 @@ type BasketItem = {
     price: number;
 };
 
+type CreateOrderResponse = { id: string };
+type CreatePaymentResponse = {
+    id: string;
+    amount: number;
+    user_id: string;
+    created_at: string;
+    status: string;
+    type: string;
+    order_id: string;
+};
+
 const TOKEN = KANPLA_API_TOKEN || '';
 
 export async function addToBasket(
@@ -57,55 +68,106 @@ export async function addToBasket(
     return product;
 }
 
-export async function orderAndPay() {
+async function makeRequest<T>(
+    url: string,
+    options: RequestInit,
+    maxRetries = 3
+): Promise<T> {
+    let attempts = 0;
 
+    while (attempts < maxRetries) {
+        try {
+            const response = await fetch(url, options);
+
+            // Check if the response is not OK
+            if (!response.ok) {
+                const errorText = await response.text();  // Read the raw error message
+                throw new Error(`Request failed with status ${response.status}: ${errorText}`);
+            }
+
+            const contentType = response.headers.get("Content-Type") || "";
+            // Check if the content is JSON
+            if (contentType.includes("application/json")) {
+                try {
+                    const data = await response.json() as T;
+                    return data;
+                } catch (e) {
+                    throw new Error(`Failed to parse JSON from response: ${e}`);
+                }
+            }
+
+            // If it's not JSON, just throw an error with the raw response text
+            const rawText = await response.text(); // Fallback to raw text if not JSON
+            throw new Error(`Unexpected response type. Expected JSON but received: ${contentType}. Response: ${rawText}`);
+
+        } catch (error) {
+            attempts++;
+            if (attempts >= maxRetries) {
+                throw new Error(`Request failed after ${maxRetries} attempts: ${error}`);
+            }
+        }
+    }
+    throw new Error("Unhandled error during request.");
+}
+
+
+
+
+export async function orderAndPay() {
     const basketTotalFromDb = await readAllItemsAggregated();
 
-    const createOrderResponse = await fetch(
-        "https://kanpla-code-challenge.up.railway.app/orders/",
-        {
-            method: "POST",
-            headers: { "X-Auth-User": TOKEN, "Content-Type": "application/json" },
-            body: JSON.stringify({ total: basketTotalFromDb.totalPrice }),
-        }
-    );
-    const createOrderData = (await createOrderResponse.json()) as { id: string };
-    const orderId = createOrderData.id;
+    try {
+        const createOrderResponse = await makeRequest<CreateOrderResponse>(
+            "https://kanpla-code-challenge.up.railway.app/orders/",
+            {
+                method: "POST",
+                headers: { "X-Auth-User": TOKEN, "Content-Type": "application/json" },
+                body: JSON.stringify({ total: basketTotalFromDb.totalPrice }),
+            }
+        );
 
-    const createPaymentResponse = await fetch(
-        "https://kanpla-code-challenge.up.railway.app/payments/",
-        {
-            method: "POST",
-            headers: { "X-Auth-User": TOKEN, "Content-Type": "application/json" },
-            body: JSON.stringify({ order_id: orderId, amount: basketTotalFromDb.totalPrice }),
+        const orderId = createOrderResponse.id;
+
+        const createPaymentResponse = await makeRequest<CreatePaymentResponse>(
+            "https://kanpla-code-challenge.up.railway.app/payments/",
+            {
+                method: "POST",
+                headers: { "X-Auth-User": TOKEN, "Content-Type": "application/json" },
+                body: JSON.stringify({ order_id: orderId, amount: 1 }),
+            }
+        );
+
+        console.log("Payment status: " + createPaymentResponse.status);
+        if (createPaymentResponse.status !== "completed") {
+            throw new Error("Payment failed");
         }
-    );
-    const createPaymentData = (await createPaymentResponse.json()) as {
-        id: string;
-        amount: number;
-        user_id: string;
-        created_at: string;
-        status: string;
-        type: string;
-        order_id: string;
-    };
-    if (createPaymentData.status !== "complete") {
-        throw new Error("Payment failed");
+
+        const updateOrderResponse = await fetch(
+            `https://kanpla-code-challenge.up.railway.app/orders/${orderId}`,
+            {
+                method: "PATCH",
+                headers: { "X-Auth-User": TOKEN, "Content-Type": "application/json" },
+                body: JSON.stringify({ status: "completed" }),
+            }
+        );
+
+        if (!updateOrderResponse.ok) {
+            const errorText = await updateOrderResponse.text();
+            throw new Error(`Failed to update order status: ${errorText}`);
+        }
+
+        const data = await updateOrderResponse.json();
+
+        // Clear the basket if the order is successful
+        if (updateOrderResponse.status === 200) {
+            await deleteAllItems();
+        }
+
+        basket = [];
+        basketTotal = 0;
+    } catch (error) {
+        // Handle errors gracefully and log them
+        console.error("An error occurred during order and payment process:", error);
+        // Optionally, handle retry logic or display a user-friendly message
     }
-
-    const response = await fetch(
-        `https://kanpla-code-challenge.up.railway.app/orders/${orderId}`,
-        {
-            method: "PATCH",
-            headers: { "X-Auth-User": TOKEN, "Content-Type": "application/json" },
-            body: JSON.stringify({ status: "completed" }),
-        }
-    );
-    const data = await response.json();
-    if (response.status == 200) {
-        deleteAllItems()
-    }
-
-    basket = [];
-    basketTotal = 0;
 }
