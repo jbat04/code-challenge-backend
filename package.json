@@ -4,11 +4,13 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "tsx src/index.ts"
+    "dev": "tsx watch --inspect src/index.ts"
   },
   "dependencies": {
     "dotenv": "^16.4.7",
-    "express": "^4.21.1"
+    "express": "^4.21.1",
+    "sqlite": "^5.1.1",
+    "sqlite3": "^5.1.7"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",
